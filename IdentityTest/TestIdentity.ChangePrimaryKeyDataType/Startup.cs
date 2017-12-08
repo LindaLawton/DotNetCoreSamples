@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
@@ -41,7 +42,7 @@ namespace TestIdentity.ChangePrimaryKeyDataType
             services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(Configuration.GetConnectionString("Default")));
 
-            services.AddIdentity<ApplicationUser, ApplicationRole>()
+            services.AddIdentity<ApplicationUser, IdentityRole<long>>()
                 .AddEntityFrameworkStores<ApplicationDbContext>()
                 .AddDefaultTokenProviders();
 
@@ -57,7 +58,10 @@ namespace TestIdentity.ChangePrimaryKeyDataType
             {
                 app.UseDeveloperExceptionPage();
             }
-            app.InitializeDatabase();
+
+            var task = InitializeDatabase(app);
+            Task.WaitAll(task);
+
             app.UseMvc();
         }
 
@@ -75,22 +79,39 @@ namespace TestIdentity.ChangePrimaryKeyDataType
             }
         }
 
-    }
-
-    public static class ApplicationExtensions
-    {
-        public static void InitializeDatabase(this IApplicationBuilder app)
+        public async Task InitializeDatabase(IApplicationBuilder app)
         {
             using (var serviceScope = app.ApplicationServices.GetService<IServiceScopeFactory>().CreateScope())
             {
+                // Create DB
                 serviceScope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.Migrate();
 
+                // Add roles
+                var roleManager = serviceScope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<long>>>();
+                if (!roleManager.Roles.Any())
+                {
+                    foreach (var role in Config.GetTestRolls())
+                    {
+                        await roleManager.CreateAsync(role);
+                    }
+                }
+
+                // Add users
                 var userManager = serviceScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-
                 if (userManager.Users.Any()) return;
+                foreach (var user in Config.GetTestUsers())
+                {
+                    await userManager.CreateAsync(user, "Password123!");
+                }
+                
 
-                var tasks = Config.GetTestUsers().Select(user => userManager.CreateAsync(user, "Password123!")).ToArray();
-                Task.WaitAll(tasks);
+                var adminUser = await userManager.FindByEmailAsync(Config.GetTestUsers().FirstOrDefault()?.Email);
+                if (adminUser != null)
+                {
+                    await userManager.AddToRoleAsync(adminUser, Config.GetTestRolls().FirstOrDefault()?.Name);
+                }
+
+
             }
         }
     }
